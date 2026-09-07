@@ -1,31 +1,64 @@
 # Saya Comfy Couple+
 
-Saya Comfy Couple+ is a modified Comfy Couple node for ComfyUI.
+> [!WARNING]
+> **Work in Progress**
+>
+> Saya Comfy Couple+ is still under active development.
+>
+> The project already works and can be used in real ComfyUI workflows, but the internal routing, node layout, ports, behavior and documentation may still change while the project is being refined.
+>
+> If you build an important workflow around it, keep a backup before updating.
 
-It is made for cleaner solo, duo, and dual-character workflows where you want better control over:
+## What is Saya Comfy Couple+?
 
-* shared scene prompts
-* Person 1 identity prompts
-* Person 2 identity prompts
-* negative prompts
-* automatic region masks
-* IPAdapter `attn_mask` routing
-* detailer prompt routing
+**Saya Comfy Couple+** is a modified and expanded Comfy Couple implementation for ComfyUI.
 
-The main goal is simple:
+It is designed primarily for workflows where one image contains **one or two distinct characters** and you want to keep:
+
+* the global scene
+* Person 1 identity
+* Person 2 identity
+* regional attention
+* IPAdapter references
+* detailer prompts
+
+separated from each other instead of mixing everything into the same conditioning.
+
+The basic idea is simple:
 
 ```text
-MAIN = shared scene, composition, pose, action, mood, background
-PERSON 1 = first character identity
-PERSON 2 = second character identity
-NEGATIVE = shared negative prompt
+MAIN
+Shared scene, composition, action, pose, lighting, background and mood
+
+PERSON 1
+Identity and appearance of the first character
+
+PERSON 2
+Identity and appearance of the second character
+
+NEGATIVE
+Shared negative prompt
 ```
 
-Instead of forcing scene context and character identity into only two regional prompts, Saya Comfy Couple+ gives you cleaner prompt separation and stronger routing.
+The goal is not simply to create two masks.
 
-## Why this fork exists
+The goal is to give ComfyUI a cleaner way to understand:
 
-The original Comfy Couple node is useful for two-character regional prompting, but its prompt structure is limited:
+```text
+What belongs to the whole image?
+
+What belongs specifically to Person 1?
+
+What belongs specifically to Person 2?
+```
+
+This becomes especially useful in larger automatic workflows using regional prompting, IPAdapter and detailers.
+
+---
+
+# Why does this project exist?
+
+The original Comfy Couple approach is useful for regional two-character generation, but its prompt structure is relatively simple:
 
 ```text
 positive_1
@@ -33,13 +66,19 @@ positive_2
 negative
 ```
 
-That often forces users to mix too much logic together:
+In a complex workflow, that often means each character prompt must contain several unrelated things at once:
 
 ```text
-scene + character identity + regional prompt + detailer logic
+scene
++ composition
++ character identity
++ regional information
++ detailer information
 ```
 
-Saya Comfy Couple+ changes the node structure to:
+That works, but it becomes harder to maintain and harder to reason about.
+
+Saya Comfy Couple+ instead separates the prompt into:
 
 ```text
 main_positive
@@ -48,553 +87,883 @@ person_2_positive
 negative
 ```
 
-This makes the workflow easier to understand and easier to control.
-
-You can keep the global scene in `main_positive`, then keep each character identity in its own input.
-
-## What the node does
-
-Saya Comfy Couple+ builds two regional contexts internally.
+The node then combines the relevant information internally.
 
 For Person 1:
 
 ```text
-Person 1 region = main_positive + person_1_positive
+Person 1 context
+=
+main_positive
++
+person_1_positive
 ```
 
 For Person 2:
 
 ```text
-Person 2 region = main_positive + person_2_positive
+Person 2 context
+=
+main_positive
++
+person_2_positive
 ```
 
-This means each region receives:
+Both characters therefore receive the same scene information while keeping their own identity information.
 
-* the shared scene context
-* the correct character identity
+---
 
-This usually gives stronger prompt reading than sending the main prompt and character prompts as weak separated conditions.
+# How it works
 
-The node also exposes useful routing outputs:
+A simplified generation looks like this:
+
+```text
+                    MAIN
+                     │
+             ┌───────┴───────┐
+             │               │
+             ▼               ▼
+         PERSON 1         PERSON 2
+             │               │
+             ▼               ▼
+      MAIN + PERSON 1   MAIN + PERSON 2
+             │               │
+             └───────┬───────┘
+                     │
+                     ▼
+              Regional Couple
+                conditioning
+                     │
+                     ▼
+                  Sampler
+```
+
+The important part is that `MAIN` is not treated as a weak unrelated condition.
+
+It becomes part of both regional character contexts.
+
+This makes the prompt structure much easier to understand:
+
+```text
+MAIN tells the image what is happening.
+
+PERSON 1 tells the first region who Person 1 is.
+
+PERSON 2 tells the second region who Person 2 is.
+```
+
+---
+
+# Example
+
+Imagine this image:
+
+```text
+Two characters sitting together on a bed in a gamer bedroom.
+Soft evening lighting.
+Medium shot.
+```
+
+Person 1 is:
+
+```text
+short blue hair,
+white eyes,
+rabbit ears,
+petite body,
+white hoodie
+```
+
+Person 2 is:
+
+```text
+long pink hair,
+red eyes,
+black horns,
+tall body,
+black dress
+```
+
+Instead of repeating the bedroom, pose and lighting in both character prompts:
+
+```text
+MAIN
+
+two characters,
+sitting together on a bed,
+modern gamer bedroom,
+soft evening lighting,
+medium shot
+```
+
+```text
+PERSON 1
+
+short blue hair,
+white eyes,
+rabbit ears,
+petite body,
+white hoodie
+```
+
+```text
+PERSON 2
+
+long pink hair,
+red eyes,
+black horns,
+tall body,
+black dress
+```
+
+Internally, Saya Comfy Couple+ builds:
+
+```text
+REGION 1
+
+two characters,
+sitting together on a bed,
+modern gamer bedroom,
+soft evening lighting,
+medium shot,
+short blue hair,
+white eyes,
+rabbit ears,
+petite body,
+white hoodie
+```
+
+and:
+
+```text
+REGION 2
+
+two characters,
+sitting together on a bed,
+modern gamer bedroom,
+soft evening lighting,
+medium shot,
+long pink hair,
+red eyes,
+black horns,
+tall body,
+black dress
+```
+
+This keeps the scene shared without forcing the two identities into the same prompt.
+
+---
+
+# Main features
+
+Saya Comfy Couple+ currently provides:
+
+* separate `MAIN`, `PERSON 1` and `PERSON 2` conditioning
+* shared negative conditioning
+* regional couple attention
+* automatic Person 1 and Person 2 masks
+* horizontal and vertical region layouts
+* configurable region split position
+* dedicated outputs for workflow routing
+* IPAdapter `attn_mask` support
+* detailer-oriented conditioning outputs
+* solo and duo workflow support
+* safer handling of different encoded conditioning lengths
+
+---
+
+# Outputs and routing
+
+The node exposes several outputs because different parts of a large workflow usually need different information.
+
+## `model`
+
+The model patched with Saya Comfy Couple attention logic.
+
+Normally:
+
+```text
+Saya Comfy Couple+ model
+→ KSampler model
+```
+
+---
+
+## `full_positive`
+
+This is the main positive conditioning used for generation.
+
+It contains the regional structure built from:
+
+```text
+MAIN + PERSON 1
+MAIN + PERSON 2
+```
+
+Normally:
 
 ```text
 full_positive
-main_positive
-person_1_positive
-person_2_positive
-duo_positive
-mask_positive_1
-mask_positive_2
+→ KSampler positive
 ```
 
-## Main features
+---
 
-* Main / Person 1 / Person 2 prompt routing
-* Stronger regional context using `main + person` prompt concatenation
-* `full_positive` output for the main sampler
-* `duo_positive` output for detailers
-* `mask_positive_1` and `mask_positive_2` outputs for automask routing
-* IPAdapter-friendly `attn_mask` workflow support
-* Solo and duo workflow support
-* Safer handling of different encoded CLIP context lengths
+## `negative`
 
-## Installation
+Shared negative conditioning.
 
-Install it like a normal ComfyUI custom node.
-
-Clone the repository inside your ComfyUI `custom_nodes` folder, then restart ComfyUI.
-
-Repository:
+Normally:
 
 ```text
-https://github.com/alphaziod/saya-comfy-couple-plus.git
+negative
+→ KSampler negative
 ```
 
-## Windows installation
+It can also be reused by detailers and other workflow branches.
 
-### Standard ComfyUI install
+---
 
-Open PowerShell.
+## `main_positive`
 
-Go to your ComfyUI `custom_nodes` folder:
+The original shared scene conditioning.
 
-```powershell
-cd C:\ComfyUI\custom_nodes
-```
-
-Clone the node:
-
-```powershell
-git clone https://github.com/alphaziod/saya-comfy-couple-plus.git
-```
-
-Restart ComfyUI.
-
-### ComfyUI portable
-
-If you use ComfyUI portable, the path is usually:
-
-```powershell
-cd C:\ComfyUI_windows_portable\ComfyUI\custom_nodes
-```
-
-Clone the node:
-
-```powershell
-git clone https://github.com/alphaziod/saya-comfy-couple-plus.git
-```
-
-Restart ComfyUI portable.
-
-## macOS installation
-
-Open Terminal.
-
-Go to your ComfyUI `custom_nodes` folder:
-
-```bash
-cd ~/ComfyUI/custom_nodes
-```
-
-Clone the node:
-
-```bash
-git clone https://github.com/alphaziod/saya-comfy-couple-plus.git
-```
-
-Restart ComfyUI.
-
-If your ComfyUI folder is somewhere else, use your own path:
-
-```bash
-cd /path/to/ComfyUI/custom_nodes
-```
-
-## Linux installation
-
-Open a terminal.
-
-Go to your ComfyUI `custom_nodes` folder:
-
-```bash
-cd ~/ComfyUI/custom_nodes
-```
-
-Clone the node:
-
-```bash
-git clone https://github.com/alphaziod/saya-comfy-couple-plus.git
-```
-
-Restart ComfyUI.
-
-If your ComfyUI folder is somewhere else, use your own path:
-
-```bash
-cd /path/to/ComfyUI/custom_nodes
-```
-
-## Arch Linux installation
-
-Install Git if needed:
-
-```bash
-sudo pacman -S git
-```
-
-Clone the node:
-
-```bash
-cd ~/ComfyUI/custom_nodes
-git clone https://github.com/alphaziod/saya-comfy-couple-plus.git
-```
-
-Restart ComfyUI.
-
-## Fedora installation
-
-Install Git if needed:
-
-```bash
-sudo dnf install git
-```
-
-Clone the node:
-
-```bash
-cd ~/ComfyUI/custom_nodes
-git clone https://github.com/alphaziod/saya-comfy-couple-plus.git
-```
-
-Restart ComfyUI.
-
-## Debian / Ubuntu installation
-
-Install Git if needed:
-
-```bash
-sudo apt update
-sudo apt install git
-```
-
-Clone the node:
-
-```bash
-cd ~/ComfyUI/custom_nodes
-git clone https://github.com/alphaziod/saya-comfy-couple-plus.git
-```
-
-Restart ComfyUI.
-
-## NixOS installation
-
-If Git is already available:
-
-```bash
-cd ~/ComfyUI/custom_nodes
-git clone https://github.com/alphaziod/saya-comfy-couple-plus.git
-```
-
-If Git is not available, open a temporary shell with Git:
-
-```bash
-nix shell nixpkgs#git
-```
-
-Then clone:
-
-```bash
-cd ~/ComfyUI/custom_nodes
-git clone https://github.com/alphaziod/saya-comfy-couple-plus.git
-```
-
-Restart ComfyUI.
-
-## Updating
-
-To update the node later:
-
-```bash
-cd ~/ComfyUI/custom_nodes/saya-comfy-couple-plus
-git pull
-```
-
-Then restart ComfyUI.
-
-On Windows portable, the path may be:
-
-```powershell
-cd C:\ComfyUI_windows_portable\ComfyUI\custom_nodes\saya-comfy-couple-plus
-git pull
-```
-
-Then restart ComfyUI portable.
-
-## Uninstalling
-
-Remove the folder from `custom_nodes`.
-
-Linux / macOS:
-
-```bash
-rm -rf ~/ComfyUI/custom_nodes/saya-comfy-couple-plus
-```
-
-Windows PowerShell:
-
-```powershell
-Remove-Item -Recurse -Force C:\ComfyUI\custom_nodes\saya-comfy-couple-plus
-```
-
-Then restart ComfyUI.
-
-## Inputs
-
-### model
-
-The model to patch with Comfy Couple attention logic.
-
-Connect your checkpoint-loaded or LoRA-loaded model here.
-
-### main_positive
-
-The shared positive prompt.
-
-Use this for global image logic:
-
-* number of characters
-* scene
-* pose
-* framing
-* mood
-* lighting
-* background
-* shared action
-* global style
+Useful when another part of your workflow needs only global information.
 
 Examples:
 
 ```text
-solo, one character, on bed, intimate framing, modern gamer bedroom
+scene
+pose
+composition
+background
+lighting
+shared action
+style
 ```
 
-or:
+---
+
+## `person_1_positive`
+
+The original Person 1 conditioning.
+
+Useful for:
 
 ```text
-two characters, sitting together, bedroom scene, soft lighting, medium shot
+Person 1 detailers
+debugging
+identity-specific routing
+custom workflow branches
 ```
 
-### person_1_positive
+---
 
-Prompt for Person 1.
+## `person_2_positive`
 
-Use this for the first character identity:
+The original Person 2 conditioning.
 
-* face
-* hair
-* eyes
-* ears
-* body type
-* outfit
-* accessories
-* character-specific details
+Useful for the same purposes as Person 1, but for the second character.
 
-### person_2_positive
+---
 
-Prompt for Person 2.
+## `duo_positive`
 
-Use this for the second character identity.
+Combined Person 1 and Person 2 identity conditioning without the full scene prompt.
 
-For solo generation, this can be routed to an empty or disabled conditioning depending on your workflow.
+A common use is:
 
-### negative
+```text
+duo_positive
+→ detailer positive
+```
 
-Shared negative conditioning.
+This is useful when a detailer should know which characters exist without receiving every background, composition or lighting instruction from `MAIN`.
 
-Use your normal negative prompt here.
+---
 
-### orientation
+## `mask_positive_1`
 
-Controls the mask split direction.
+Automatic regional mask for Person 1.
 
-Available values:
+Typical usage:
+
+```text
+mask_positive_1
+→ Person 1 IPAdapter attn_mask
+```
+
+---
+
+## `mask_positive_2`
+
+Automatic regional mask for Person 2.
+
+Typical usage:
+
+```text
+mask_positive_2
+→ Person 2 IPAdapter attn_mask
+```
+
+This allows two different IPAdapter references to be spatially routed toward their respective characters.
+
+---
+
+# Inputs
+
+## `model`
+
+Connect the model you want Saya Comfy Couple+ to patch.
+
+For example:
+
+```text
+Checkpoint Loader
+→ LoRA
+→ Saya Comfy Couple+
+```
+
+or simply:
+
+```text
+Checkpoint Loader
+→ Saya Comfy Couple+
+```
+
+---
+
+## `main_positive`
+
+Use this for anything that applies to the image as a whole.
+
+Good examples:
+
+```text
+number of characters
+scene
+pose
+composition
+camera framing
+camera angle
+shared action
+background
+lighting
+mood
+global style
+```
+
+Example:
+
+```text
+two characters,
+sitting together,
+bedroom,
+soft lighting,
+medium shot
+```
+
+Avoid putting Person 1 or Person 2 identity information here unless that characteristic should genuinely apply to both characters.
+
+---
+
+## `person_1_positive`
+
+Use this for Person 1 identity.
+
+Examples:
+
+```text
+hair
+eyes
+ears
+horns
+body type
+clothes
+accessories
+character-specific traits
+```
+
+---
+
+## `person_2_positive`
+
+Same idea, but for Person 2.
+
+For a solo workflow, this input can be empty or disabled depending on how your workflow handles empty conditioning.
+
+---
+
+## `negative`
+
+Your shared negative conditioning.
+
+Use the same negative prompt you would normally use for your model and workflow.
+
+---
+
+## `orientation`
+
+Controls the direction of the automatic regional split.
+
+Available modes:
 
 ```text
 horizontal
 vertical
 ```
 
-### center
+Choose the mode that best matches the expected placement of the characters.
 
-Controls where the split happens.
+---
+
+## `center`
+
+Controls where the separation between the two regions happens.
 
 Examples:
 
 ```text
-0.5 = centered split
-0.4 = one side smaller, the other larger
-0.6 = opposite balance
+0.50
+equal split
+
+0.40
+Person 1 side becomes smaller and Person 2 side becomes larger
+
+0.60
+Person 1 side becomes larger and Person 2 side becomes smaller
 ```
 
-### width / height
+The exact visual result depends on orientation.
 
-Canvas size used for the internal automasks.
+---
 
-These should match the generation canvas or the canvas used by your workflow.
+## `width` / `height`
 
-## Outputs
+Resolution used to build the internal automatic masks.
 
-### model
+These values should correspond to the canvas used by your generation workflow.
 
-The patched model.
+---
 
-Connect this to the main sampler model input.
+# Quick start
 
-### full_positive
-
-Main generation positive conditioning.
-
-This is the output you normally connect to the main sampler positive input.
-
-Internally, it contains:
+A minimal duo workflow looks like this:
 
 ```text
-Person 1 region = main_positive + person_1_positive
-Person 2 region = main_positive + person_2_positive
+Checkpoint / LoRA
+        │
+        ▼
+Saya Comfy Couple+
+        │
+        ├── model ────────────→ KSampler model
+        │
+        ├── full_positive ────→ KSampler positive
+        │
+        └── negative ─────────→ KSampler negative
 ```
 
-### negative
-
-Negative conditioning passthrough.
-
-Connect this to the main sampler negative input and to other nodes that need the same negative conditioning.
-
-### main_positive
-
-Raw main prompt passthrough.
-
-Useful for debug, extra routing, or custom workflow logic.
-
-### person_1_positive
-
-Raw Person 1 prompt passthrough.
-
-Useful for Person 1 detailers, debug routing, or identity-specific workflow branches.
-
-### person_2_positive
-
-Raw Person 2 prompt passthrough.
-
-Useful for Person 2 detailers, debug routing, or identity-specific workflow branches.
-
-### duo_positive
-
-Person 1 + Person 2 conditioning without the main scene prompt.
-
-Recommended use:
+Prompt connections:
 
 ```text
-duo_positive -> detailer positive
+Shared scene CLIP
+→ main_positive
+
+Person 1 CLIP
+→ person_1_positive
+
+Person 2 CLIP
+→ person_2_positive
+
+Negative CLIP
+→ negative
 ```
 
-This is useful because detailers often should focus on character identity without being influenced too much by the full scene prompt, background prompt, or lighting prompt.
+That is enough to use the main regional generation system.
 
-### mask_positive_1
+---
 
-Automask for Person 1.
+# Tutorial 1 - Solo generation
 
-Recommended use:
+Saya Comfy Couple+ can also be used when only one character is present.
+
+Use:
 
 ```text
-mask_positive_1 -> IPAdapter Person 1 attn_mask
+MAIN
+
+solo,
+one character,
+bedroom,
+sitting on bed,
+medium shot,
+soft lighting
 ```
-
-### mask_positive_2
-
-Automask for Person 2.
-
-Recommended use:
 
 ```text
-mask_positive_2 -> IPAdapter Person 2 attn_mask
+PERSON 1
+
+short blue hair,
+white eyes,
+rabbit ears,
+white hoodie
 ```
-
-## Recommended wiring
-
-### Main generation
 
 ```text
-Checkpoint / LoRA model -> model
+PERSON 2
 
-main prompt conditioning -> main_positive
-Person 1 conditioning -> person_1_positive
-Person 2 conditioning -> person_2_positive
-negative conditioning -> negative
-
-Saya Comfy Couple+ model -> sampler model
-Saya Comfy Couple+ full_positive -> sampler positive
-Saya Comfy Couple+ negative -> sampler negative
+empty / disabled conditioning
 ```
-
-### IPAdapter
 
 ```text
-Saya Comfy Couple+ mask_positive_1 -> IPAdapter Person 1 attn_mask
-Saya Comfy Couple+ mask_positive_2 -> IPAdapter Person 2 attn_mask
+NEGATIVE
+
+your normal negative prompt
 ```
 
-This lets each IPAdapter reference affect its own region.
-
-### Detailers
-
-Recommended simple setup:
+The important principle stays the same:
 
 ```text
-Saya Comfy Couple+ duo_positive -> detailer positive
-Saya Comfy Couple+ negative -> detailer negative
+MAIN
+=
+what the image is doing
+
+PERSON 1
+=
+who the character is
 ```
 
-This gives detailers access to both character identity prompts without making them read the full scene prompt.
+This allows the workflow to keep the same prompt architecture when switching between solo and duo generations.
 
-This is useful when you do not want to split detailers into separate Person 1 and Person 2 branches, because splitting detailers can increase generation time.
+---
 
-## Solo generation
+# Tutorial 2 - Duo generation
 
-Saya Comfy Couple+ can also work well for solo generation.
-
-Recommended solo setup:
+For two characters:
 
 ```text
-main_positive = solo, one character, scene, pose, framing, background
-person_1_positive = character identity
-person_2_positive = empty or disabled conditioning
-negative = normal negative prompt
-```
+MAIN
 
-The node still builds:
+two characters,
+sitting together,
+bedroom,
+medium shot,
+soft evening lighting
+```
 
 ```text
-Person 1 region = main_positive + person_1_positive
-Person 2 region = main_positive + person_2_positive
+PERSON 1
+
+short blue hair,
+white eyes,
+rabbit ears,
+petite body
 ```
-
-If `person_2_positive` is empty and `main_positive` clearly says `solo`, the workflow can behave like a normal solo generation setup while still keeping the clean routing structure.
-
-## Duo generation
-
-Recommended duo setup:
 
 ```text
-main_positive = two characters, shared scene, pose, action, background
-person_1_positive = first character identity
-person_2_positive = second character identity
-negative = normal negative prompt
+PERSON 2
+
+long pink hair,
+red eyes,
+black horns,
+tall body
 ```
 
-The node builds:
+Then connect:
 
 ```text
-Person 1 region = main_positive + person_1_positive
-Person 2 region = main_positive + person_2_positive
+Saya model
+→ sampler model
+
+full_positive
+→ sampler positive
+
+negative
+→ sampler negative
 ```
 
-This keeps the global scene shared while letting each character keep its own identity.
-
-## Prompt organization advice
-
-Use `main_positive` for shared image logic.
-
-Good for `main_positive`:
+The node internally creates two regional contexts:
 
 ```text
-two characters, bedroom scene, sitting together, soft lighting, medium shot
+MAIN + PERSON 1
+MAIN + PERSON 2
 ```
 
-Good for `person_1_positive`:
+This is the core behavior of Saya Comfy Couple+.
+
+---
+
+# Tutorial 3 - Two-character IPAdapter
+
+Saya Comfy Couple+ also provides masks that can be used as IPAdapter attention masks.
+
+For Person 1:
 
 ```text
-short blue hair, white eyes, rabbit ears, petite body
+Person 1 reference image
+→ IPAdapter Person 1
+
+mask_positive_1
+→ IPAdapter Person 1 attn_mask
 ```
 
-Good for `person_2_positive`:
+For Person 2:
 
 ```text
-long pink hair, red eyes, horns, taller body
+Person 2 reference image
+→ IPAdapter Person 2
+
+mask_positive_2
+→ IPAdapter Person 2 attn_mask
 ```
 
-Avoid putting character-specific identity details into `main_positive` unless both characters should share them.
-
-For example, do not put this in `main_positive`:
+Conceptually:
 
 ```text
-blue hair, white eyes
+PERSON 1 reference
+        │
+        ▼
+   IPAdapter P1
+        ▲
+        │
+ mask_positive_1
+
+
+PERSON 2 reference
+        │
+        ▼
+   IPAdapter P2
+        ▲
+        │
+ mask_positive_2
 ```
 
-unless both characters should have blue hair and white eyes.
+The goal is to prevent both references from blindly influencing the entire image.
 
-## Difference from original Comfy Couple
+Each reference instead receives the regional mask associated with its character.
 
-Original Comfy Couple:
+---
+
+# Tutorial 4 - Detailers
+
+Detailers often need different prompt information from the main sampler.
+
+The main sampler needs:
+
+```text
+scene
+composition
+background
+characters
+regional information
+```
+
+A face or body detailer often cares much more about:
+
+```text
+character identity
+appearance
+clothing
+character-specific features
+```
+
+For a simple shared detailer setup:
+
+```text
+duo_positive
+→ detailer positive
+
+negative
+→ detailer negative
+```
+
+`duo_positive` contains the character information without forcing the detailer to reread the entire shared scene prompt.
+
+This is especially useful in automatic workflows where using separate detailer branches for every character would unnecessarily increase complexity and generation time.
+
+If your workflow uses separate Person 1 and Person 2 detailers, the raw person outputs are also available:
+
+```text
+person_1_positive
+→ Person 1 detailer
+
+person_2_positive
+→ Person 2 detailer
+```
+
+---
+
+# Recommended prompt organization
+
+A good rule is:
+
+## MAIN
+
+Describe:
+
+```text
+WHAT is happening
+WHERE it happens
+HOW the image is framed
+HOW the scene is lit
+```
+
+Example:
+
+```text
+two characters,
+sitting together,
+modern bedroom,
+medium shot,
+warm evening lighting
+```
+
+## PERSON 1
+
+Describe:
+
+```text
+WHO Person 1 is
+```
+
+Example:
+
+```text
+short blue hair,
+white eyes,
+rabbit ears,
+petite body,
+white hoodie
+```
+
+## PERSON 2
+
+Describe:
+
+```text
+WHO Person 2 is
+```
+
+Example:
+
+```text
+long pink hair,
+red eyes,
+black horns,
+tall body,
+black dress
+```
+
+Do not put:
+
+```text
+blue hair,
+white eyes
+```
+
+inside `MAIN` unless both characters are supposed to receive those traits.
+
+---
+
+# Why prompt separation matters
+
+Consider this prompt:
+
+```text
+two girls,
+bedroom,
+blue hair,
+pink hair,
+red eyes,
+white eyes,
+rabbit ears,
+horns
+```
+
+A diffusion model sees all of those concepts together.
+
+It does not automatically know that:
+
+```text
+blue hair
+white eyes
+rabbit ears
+```
+
+belong exclusively to Person 1 while:
+
+```text
+pink hair
+red eyes
+horns
+```
+
+belong exclusively to Person 2.
+
+Saya Comfy Couple+ gives the workflow explicit structure for separating those concepts spatially.
+
+It cannot guarantee perfect character binding in every generation, but it gives the model and workflow much cleaner information to work with.
+
+---
+
+# Automatic regional masks
+
+Saya Comfy Couple+ creates two masks corresponding to the two character regions.
+
+Their layout is controlled by:
+
+```text
+orientation
+center
+width
+height
+```
+
+A simplified horizontal example:
+
+```text
+┌──────────────────────────────┐
+│                              │
+│     PERSON 1 | PERSON 2      │
+│                              │
+└──────────────────────────────┘
+```
+
+A different `center` value changes the relative size of the two regions.
+
+These masks are also exposed to the workflow so other systems such as IPAdapter can reuse the same spatial organization.
+
+---
+
+# Conditioning length safety
+
+Character prompts do not always encode to the same context length.
+
+For example:
+
+```text
+Person 1
+short prompt
+
+Person 2
+much longer prompt with many identity details
+```
+
+Saya Comfy Couple+ includes handling for different encoded conditioning lengths.
+
+Shorter context tensors are padded where necessary before internal concatenation.
+
+This helps prevent tensor-size mismatch errors when regional conditioning lengths differ.
+
+This is a safety mechanism.
+
+It does **not** remove or bypass the underlying CLIP token limits of the model.
+
+---
+
+# Difference from the original Comfy Couple
+
+Original structure:
 
 ```text
 positive_1
@@ -611,9 +980,10 @@ person_2_positive
 negative
 ```
 
-Extra routing outputs:
+Additional routing:
 
 ```text
+full_positive
 main_positive
 person_1_positive
 person_2_positive
@@ -622,101 +992,300 @@ mask_positive_1
 mask_positive_2
 ```
 
-Main internal improvement:
+Core idea:
 
 ```text
-Person 1 region = main_positive + person_1_positive
-Person 2 region = main_positive + person_2_positive
+PERSON 1 REGION
+=
+MAIN + PERSON 1
+
+PERSON 2 REGION
+=
+MAIN + PERSON 2
 ```
 
-This makes the prompt structure easier to understand and often improves prompt reading strength.
+This gives complex workflows a cleaner separation between global scene information and character-specific identity information.
 
-## Token length safety patch
+---
 
-This fork also keeps a safety patch for different encoded conditioning lengths.
+# Installation
 
-When regional prompts have different token lengths, shorter context tensors are padded before concatenation.
+## Git
 
-This helps avoid tensor size mismatch errors when one character prompt is longer than the other.
+Clone the repository inside your ComfyUI `custom_nodes` directory.
 
-This does not remove the CLIP token limit. It only makes the internal attention logic safer when the encoded conditioning lengths differ.
+Linux / macOS:
 
-## Troubleshooting
+```bash
+cd ~/ComfyUI/custom_nodes
+git clone https://github.com/alphaziod/saya-comfy-couple-plus.git
+```
 
-### The node does not appear in ComfyUI
+Windows PowerShell:
 
-Check that the folder is inside:
+```powershell
+cd C:\ComfyUI\custom_nodes
+git clone https://github.com/alphaziod/saya-comfy-couple-plus.git
+```
+
+ComfyUI Portable:
+
+```powershell
+cd C:\ComfyUI_windows_portable\ComfyUI\custom_nodes
+git clone https://github.com/alphaziod/saya-comfy-couple-plus.git
+```
+
+Then restart ComfyUI.
+
+If ComfyUI is installed somewhere else, use your actual `custom_nodes` path.
+
+---
+
+# Updating
+
+Linux / macOS:
+
+```bash
+cd ~/ComfyUI/custom_nodes/saya-comfy-couple-plus
+git pull
+```
+
+Windows:
+
+```powershell
+cd C:\ComfyUI\custom_nodes\saya-comfy-couple-plus
+git pull
+```
+
+Restart ComfyUI after updating.
+
+Because the project is still WIP, keeping a backup of important workflows before major updates is recommended.
+
+---
+
+# Uninstalling
+
+Remove the repository from `custom_nodes`.
+
+Linux / macOS:
+
+```bash
+rm -rf ~/ComfyUI/custom_nodes/saya-comfy-couple-plus
+```
+
+Windows PowerShell:
+
+```powershell
+Remove-Item -Recurse -Force C:\ComfyUI\custom_nodes\saya-comfy-couple-plus
+```
+
+Then restart ComfyUI.
+
+---
+
+# Troubleshooting
+
+## The node does not appear
+
+Make sure the repository exists inside:
 
 ```text
 ComfyUI/custom_nodes/
 ```
 
-The folder should look like this:
+For example:
 
 ```text
-ComfyUI/custom_nodes/saya-comfy-couple-plus/
+ComfyUI/
+└── custom_nodes/
+    └── saya-comfy-couple-plus/
 ```
 
-Then restart ComfyUI.
+Then completely restart ComfyUI.
 
-### The old Comfy Couple node still appears
+Also check the ComfyUI startup log for Python import errors.
 
-Restart ComfyUI fully.
+---
 
-If your workflow already had the old node loaded, you may need to delete and recreate the node inside the workflow so ComfyUI refreshes the ports.
+## I updated the node but the workflow still shows the old ports
 
-### The masks seem inverted
+Fully restart ComfyUI.
 
-Check your `orientation` and `center` values.
+If necessary, delete the old node from the workflow and create it again so ComfyUI rebuilds its input/output definition.
 
-Also check that:
+---
+
+## Person 1 and Person 2 appear reversed
+
+Check:
 
 ```text
-mask_positive_1 -> IPAdapter Person 1 attn_mask
-mask_positive_2 -> IPAdapter Person 2 attn_mask
+orientation
+center
 ```
 
-### The character prompt feels weak
-
-Make sure your character identity is in `person_1_positive` or `person_2_positive`, not only in `main_positive`.
-
-The node internally builds:
+Then verify your external routing:
 
 ```text
-main_positive + person_1_positive
-main_positive + person_2_positive
+mask_positive_1
+→ Person 1 IPAdapter
+
+mask_positive_2
+→ Person 2 IPAdapter
 ```
 
-so both the main prompt and the person prompt matter.
+Also verify that the correct character prompts are connected to the correct person inputs.
 
-### Detailers read too much scene context
+---
 
-Use:
+## Character identity feels weak
+
+Keep character-specific information inside:
 
 ```text
-duo_positive -> detailer positive
+person_1_positive
+```
+
+or:
+
+```text
+person_2_positive
+```
+
+Remember that the regional contexts are constructed as:
+
+```text
+MAIN + PERSON 1
+MAIN + PERSON 2
+```
+
+If all identity information is placed in `MAIN`, the separation between characters becomes much less meaningful.
+
+---
+
+## My detailer receives too much scene information
+
+Try:
+
+```text
+duo_positive
+→ detailer positive
 ```
 
 instead of:
 
 ```text
-full_positive -> detailer positive
+full_positive
+→ detailer positive
 ```
 
-`duo_positive` contains Person 1 + Person 2 without the main scene prompt.
+`duo_positive` focuses on character information without including the complete main scene context.
 
-## Notes
+---
 
-Saya Comfy Couple+ is mainly useful for advanced workflows using:
+## Different prompt lengths cause problems
 
-* two characters
-* solo or duo prompt routing
-* regional attention control
-* IPAdapter with `attn_mask`
+Saya Comfy Couple+ includes padding logic for different encoded conditioning lengths.
+
+If you still encounter a tensor-size error, report the error together with:
+
+```text
+ComfyUI version
+checkpoint/model
+resolution
+workflow
+full traceback
+```
+
+This project is still WIP, so reproducible bug reports are particularly useful.
+
+---
+
+# Current project status
+
+> [!CAUTION]
+> **Saya Comfy Couple+ is not considered finished yet.**
+
+The project is currently being actively tested and refactored.
+
+The current implementation already supports real workflows, but development is still focused on improving:
+
+* reliability
+* character separation
+* regional routing
+* automatic workflow behavior
+* compatibility
+* maintainability
+* documentation
+* edge-case handling
+
+Some behavior may therefore change between versions.
+
+Do not assume that every internal API, node port or experimental behavior is permanently frozen yet.
+
+---
+
+# What this project is not
+
+Saya Comfy Couple+ is not intended to:
+
+* replace every regional prompting solution
+* guarantee perfect identity separation in every image
+* magically fix badly structured prompts
+* replace IPAdapter
+* replace detailers
+* replace the sampler
+
+Instead, it acts as a **routing and regional conditioning layer** that helps these components work together in a cleaner two-character workflow.
+
+---
+
+# Who is this for?
+
+Saya Comfy Couple+ is mainly aimed at users building more advanced ComfyUI workflows involving:
+
+* anime or illustration generation
+* one or two characters
+* separate character identities
+* regional prompting
+* IPAdapter references
 * detailers
-* separated character identity prompts
-* reusable main / character prompt blocks
+* automatic generation pipelines
+* reusable prompt blocks
 
-It is not meant to replace every regional prompting method.
+Simple workflows may not need this level of separation.
 
-It is a cleaner Comfy Couple fork for users who want stronger routing control between scene prompt, character prompts, automasks, IPAdapter, and detailers.
+For larger workflows, however, keeping scene logic and character identity logic separate can make the graph significantly easier to maintain.
+
+---
+
+# Development
+
+This project is currently WIP.
+
+Bug reports, reproducible examples and technical feedback are useful while the architecture is still being refined.
+
+When reporting a problem, please include as much of the following as possible:
+
+```text
+ComfyUI version
+model/checkpoint
+resolution
+relevant custom nodes
+error traceback
+workflow or minimal reproduction
+expected behavior
+actual behavior
+```
+
+---
+
+# Credits
+
+Saya Comfy Couple+ is based on the Comfy Couple concept and expands it for more structured solo/duo prompt routing and larger automatic ComfyUI workflows.
+
+---
+
+# License
+
+See the repository license for the applicable terms.
