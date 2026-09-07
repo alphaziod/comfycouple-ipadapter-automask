@@ -1,0 +1,6 @@
+# Runtime dependencies not already provided by Python itself.
+numpy>=1.26
+Pillow>=10.0
+
+# PyTorch is intentionally not installed from this file.
+# ComfyUI supplies the correct CUDA/ROCm build and replacing it can break the host installation.
